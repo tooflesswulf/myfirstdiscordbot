@@ -10,25 +10,22 @@ saveFile = 'savedList'
 client = discord.Client()
 
 draftList = {'admin': ['test']}
-takenVals = []
 
 
 @client.event
 async def on_ready():
     global draftList
-    global takenVals
     print('Logged in as')
     print(client.user.name)
     print(client.user.id)
     # print(os.getcwd())
     if os.path.exists(os.getcwd()+'/'+saveFile):
-        print('saveFile Loaded.')
+        print('save file Loaded.')
     else:
-        print('saveFile does not exist at ', os.getcwd()+saveFile)
+        print('save file does not exist at:', os.getcwd()+saveFile)
         print('Creating new saveFile.')
         pickle.dump(draftList, open(saveFile, 'wb'))
     draftList = pickle.load(open(saveFile, 'rb'))
-    takenVals = [item for sublist in draftList.values() for item in sublist]
     print('------')
 
 
@@ -39,6 +36,8 @@ def save_draft():
 def mod_dict(operation, key, val):
     if operation == 'a':
         if key in draftList:
+            if any(val in sublist for sublist in draftList.values()):
+                return val + ' already exists elsewhere.'
             draftList[key].append(val)
         else:
             draftList[key] = [val]
@@ -46,6 +45,9 @@ def mod_dict(operation, key, val):
         return 'Successfully added '+val+' to '+key+'.'
     elif operation == 'd':
         if key in draftList:
+            if len(draftList[key])==0:
+                del draftList[key]
+                return 'Successfully removed '+val+' from '+key+'.'
             if val in draftList[key]:
                 draftList[key].remove(val)
                 save_draft()
