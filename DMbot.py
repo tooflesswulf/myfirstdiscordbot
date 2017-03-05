@@ -10,12 +10,12 @@ cmd_token = '!'
 draftFile = 'draftList'
 usersFile = 'userList'
 orderFile = 'draftOrder'
-admin_ids = ['97477826969616384']
+admin_ids = ['97477826969616384']#, '259926194659655680']
 my_id = '97477826969616384'
-channel_id = '286028084287635456' # test general
-server_id = '286028084287635456' # test
-#server_id = '280108153490898945' # WPCL
-#channel_id = '280108153490898945' # WPCL general
+# channel_id = '286028084287635456' # test general
+# server_id = '286028084287635456' # test
+server_id = '280108153490898945' # WPCL
+channel_id = '287719643613757443' # WPCL draft_info
 df = pd.read_csv('smogon.csv')
 pokemonNames = df['Name'][~df['Mega']].as_matrix()
 
@@ -78,7 +78,7 @@ async def mod_dict(operation, key, val, user, channel=None, flags=None, admin=Fa
                 draftList[key].append(val)
                 save_file(draftFile, draftList)
                 await client.send_message(user, 'Successfully added ' + val + ' to ' + users[key].name + '.')
-                await client.send_message(client.get_server(channel_id), users[key].name + ' has drafted ' + val + '.')
+                await client.send_message(client.get_server(server_id).get_channel(channel_id), users[key].name + ' has drafted ' + val + '.')
                 return True
             elif flags == 'temp':
                 tempList[key].append(val)
@@ -158,7 +158,12 @@ async def mod_dict(operation, key, val, user, channel=None, flags=None, admin=Fa
 def to_queue(msg):
     if not drafting:
         cmd = msg[1]
-        if cmd == 'd':
+        if cmd == 'ra':
+            global draftID
+            to_rep = msg[2]
+            rep = msg[3]
+            draftID = [rep if x == to_rep else x for x in draftID]
+        elif cmd == 'd':
             pos = []
             for i in range(2, len(msg)):
                 n = int(msg[i])
@@ -226,12 +231,27 @@ async def on_message(message):
                 global draftTier
                 draftTier = msg[1]
                 await client.send_message(auth, 'Drafting tier has been changed to '+msg[1]+'.')
+            elif is_admin and msg[0]=='skip':
+                del draftID[0]
+                save_file(orderFile, draftID)
+                if len(draftID) > 0:
+                    await client.send_message(users[draftID[0]], 'Please draft a pokemon using !draft.')
+                else:
+                    await client.send_message(client.get_server(server_id).get_channel(channel_id),
+                                              'Drafting has ended.')
+                    drafting = False
 
-        if msg[0] == 'ls':
+        if msg[0] == 'ls' or msg[0]=='show':
             if is_admin:
                 to_send = ''
+                i = 0
                 for k, v in users.items():
                     to_send += v.name+' id:\t'+k+'\nPokemon: '+', '.join(draftList[k])+'\n'
+                    i += 1
+                    if i>6:
+                        await client.send_message(auth, to_send)
+                        i=0
+                        to_send = ''
                 await client.send_message(auth, to_send)
             else:
                 await client.send_message(auth, 'The pokemon you have currently drafted are:\n'+
@@ -248,7 +268,7 @@ async def on_message(message):
             # global drafting
             if drafting and authID in users.keys():
                 if authID == draftID[0]:
-                    success = await mod_dict('a', authID, msg[1], users[authID])
+                    success = await mod_dict('a', authID, msg[1], auth)
                     if success:
                         del draftID[0]
                         save_file(orderFile, draftID)
@@ -276,21 +296,34 @@ async def on_message(message):
                     else:
                         await mod_dict('d', authID, msg[i+1], auth, flags='temp')
         elif msg[0]=='queue' or msg[0]=='q':
+            to_show = 16
             if len(draftID) == 0:
                 await client.send_message(auth, 'The queue is empty.')
             elif is_admin:
+                if len(msg) == 2:
+                    to_show = int(msg[1])
                 to_send = ''
-                for i, j in zip(draftID[:5], range(len(draftID[:5]))):
+                for i, j in zip(draftID[:to_show], range(len(draftID[:to_show]))):
                     to_send += '{}\tuser id: {}\tuser name: {}\n'.format(j, i, users[i].name)
                 await client.send_message(auth, to_send)
             else:
                 to_send = ''
-                for i, j in zip(draftID[:5], range(len(draftID[:5]))):
+                for i, j in zip(draftID[:to_show], range(len(draftID[:to_show]))):
                     to_send += '{}\t{}\n'.format(j, users[i].name)
                 await client.send_message(auth, to_send)
+                if authID not in draftID:
+                    await client.send_message(auth, 'You are not in the draft queue.')
+                else:
+                    await client.send_message(auth, 'Your next draft is in '+str(draftID.index(authID)) + ' places.')
     elif message.content.startswith(cmd_token):
         msg = message.content[1:].split(' ')
         if msg[0]=='join':
             await mod_dict('n', message.author.id, 0, user=message.author)
+        if msg[0]=='q' or msg[0]=='queue':
+            to_show = 16
+            to_send = ''
+            for i, j in zip(draftID[:to_show], range(len(draftID[:to_show]))):
+                to_send += '{}\t{}\n'.format(j, users[i].name)
+            await client.send_message(message.channel, to_send)
 
 client.run('Mjg2MDI5NTA2NDY3MjAxMDI0.C5c8OA.JznjFmsnDVfV2rVRvvd89ntQAF4')
