@@ -14,11 +14,14 @@ my_id = '97477826969616384'
 
 client = discord.Client()
 
-admin_ids = {97477826969616384: [286028084287635456]}  #Organized {admin: [servers]}
+admin_ids = {'97477826969616384': ['286028084287635456']}  #Organized {admin: [servers]}
 poke_list = {}  #Drafted pokes.  Structure is '{server: {member: list of pokemon}, s2: {}}'
 draft_order = {}    #Drafting order, {server: [queue]}
-drafting = {}   #{server: drafting?}
+drafting = {}   #{server: boolean}
 draftTier = ''
+
+pokedex = {}
+pokedex_names = []
 
 
 # Returns the contents of a file <fileName>.  If it does not exist, creates a new file with <default>.
@@ -33,6 +36,7 @@ def open_file(filename, default):
     return default
 
 
+#Saves a file <filename> with <contents> inside it.
 def save_file(filename, contents):
     pickle.dump(contents, open(filename, 'wb'))
 
@@ -59,6 +63,8 @@ async def on_ready():
     global draft_order
     global admin_ids
     global drafting
+    global pokedex
+    global pokedex_names
     print('Logged in as')
     print(client.user.name)
     print(client.user.id)
@@ -69,6 +75,10 @@ async def on_ready():
     draft_order = open_file(orderFile, {s.id: [] for s in client.servers})
     admin_ids = open_file(adminsFile, admin_ids)
     drafting = {s.id: False for s in client.servers}
+    pokedex = pickle.load(open('pokedex', 'rb'))
+    pokedex_names = [poke['species'].lower() for poke in pokedex.values() if poke['num'] > 0]
+
+    print('Ready!')
 
 
 #Modifies the queue.
@@ -107,6 +117,44 @@ async def to_queue(cmd, sID, data, ret):
 
 # This script iterates through the drafting order list and asks each person for a response, one by one.
 async def draft(sID, ret):
+    def strip_msg(msg):
+        msg = msg.lower()
+        msg = msg.strip()
+        if msg.startswith(cmd_token):
+            msg = msg[1:]
+        msg = msg.strip()
+        if msg.startswith('draft'):
+            msg = msg[5:]
+        msg = msg.strip()
+
+        if msg.startswith('mega'):
+            msg = msg[4:]
+            msg += '-mega'
+        msg = msg.strip()
+
+        if msg.startswith('alolan'):
+            msg = msg[6:]
+            msg += '-alola'
+        elif msg.startswith('alola'):
+            msg = msg[5:]
+            msg += '-alola'
+        msg = msg.strip()
+
+        return msg
+
+    def check(message):
+        if not drafting[sID]:
+            return False
+        msg = strip_msg(message.content)
+        # Should be left with just the name now, no spaces.
+        # return whether this is pokemon name  or not.
+        if msg not in pokedex_names:
+            return False
+        for team in poke_list[sID].values():
+            if msg in team:
+                return False
+        return True
+
     while True:
         if not drafting[sID]:
             break
@@ -114,34 +162,31 @@ async def draft(sID, ret):
         user = client.get_server(sID).get_member(userID)
         await client.send_message(user, 'Please draft a pokemon by typing in its name.')
 
-        def check(msg):
-            if not drafting[sID]:
-                return False
-            msg = msg.strip()
-            if msg.startswith(cmd_token):
-                del msg[0]
-            msg = msg.strip()
-            if msg.startswith('draft'):
-                del msg[:5]
-            msg = msg.strip()
-            # Should be left with just the name now, no spaces.
-            # return whether this is pokemon name or not.
-            return True
+        resp = await client.wait_for_message(author=user, check=check)
+        item = strip_msg(resp.content)
 
-        pokemon = client.wait_for_message(author=user, check=check)
-        poke_list[sID][userID].append(pokemon)
+        if userID in poke_list[sID]:
+            poke_list[sID][userID].append(item)
+        else:
+            poke_list[sID][userID] = [item]
+        await client.send_message(user, 'You have drafted {}.'.format(item))
+        save_file(drafted_poke_file, poke_list)
         del draft_order[sID][0]
+        save_file(orderFile, draft_order)
         if len(draft_order[sID])==0:
             break
+    await client.send_message(ret, 'Drafting has ended.')
+    global drafting
+    drafting[sID] = False
 
 
 # on_message basically parses the messages.
 # private
-#   admin
-#     modify queue
-#     display everybody's picks
-#   member
-#     display their own picks
+#   sudo: admin
+#     modq: modify queue
+#     show: display everybody's picks
+#   default: member
+#     show: display their own picks
 # public
 #   admin
 #     start/stop draft
@@ -177,7 +222,7 @@ async def on_message(message):
             # Modify the queue.
             if msg[0]=='mod_queue' or msg[0]=='mod_q' or msg[0]=='modq':
                 s = admin_ids[authID]
-                if s.length == 1:
+                if len(s) == 1:
                     sID = s[0]
                     del msg[0]
                 else:
@@ -205,7 +250,8 @@ async def on_message(message):
                             await client.send_message(auth, to_send)
                             i = 0
                             to_send = ''
-                    await client.send_message(auth, to_send)
+                    if not to_send == '':
+                        await client.send_message(auth, to_send)
             # elif as_root and msg[0]=='tier':
             #     global draftTier
             #     draftTier = msg[1]
@@ -253,7 +299,7 @@ async def on_message(message):
                 else:
                     drafting[sID] = True
                     await client.send_message(ret, 'Drafting has begun.')
-                    #await draft()
+                    await draft(sID, ret)
                     #Set up a drafting script
             elif (msg[0]=='stop' or msg[0]=='end') and msg[1]=='draft':
                 if not drafting[sID]:
@@ -268,9 +314,13 @@ async def on_message(message):
             to_show = 15
             to_send = ''
             sID = message.server.id
+            if len(draft_order[sID]) == 0:
+                await client.send_message(message.channel, 'The queue is empty.')
+                return
             que = draft_order[sID][:to_show]
             for i, j in zip(que, range(len(que))):
-                to_send += '{}\t{}\n'.format(j, client.get_server(sID).get_member(j).name)
+                member = client.get_server(sID).get_member(i)
+                to_send += '{}\t{}\n'.format(j, member.name)
             await client.send_message(message.channel, to_send)
 
 client.run('Mjg2MDI5NTA2NDY3MjAxMDI0.C5c8OA.JznjFmsnDVfV2rVRvvd89ntQAF4')
