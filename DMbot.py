@@ -117,6 +117,7 @@ async def to_queue(cmd, sID, data, ret):
 
 # This script iterates through the drafting order list and asks each person for a response, one by one.
 async def draft(sID, ret):
+    global drafting
     def strip_msg(msg):
         msg = msg.lower()
         msg = msg.strip()
@@ -176,7 +177,6 @@ async def draft(sID, ret):
         if len(draft_order[sID])==0:
             break
     await client.send_message(ret, 'Drafting has ended.')
-    global drafting
     drafting[sID] = False
 
 
