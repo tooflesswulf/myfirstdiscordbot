@@ -14,7 +14,7 @@ my_id = '97477826969616384'
 
 client = discord.Client()
 
-admin_ids = {'97477826969616384': ['286028084287635456']}  #Organized {admin: [servers]}
+admin_ids = {'97477826969616384': ['286028084287635456','297735108293558274']}  #Organized {admin: [servers]}
 poke_list = {}  #Drafted pokes.  Structure is '{server: {member: list of pokemon}, s2: {}}'
 draft_order = {}    #Drafting order, {server: [queue]}
 drafting = {}   #{server: boolean}
@@ -41,19 +41,23 @@ def save_file(filename, contents):
     pickle.dump(contents, open(filename, 'wb'))
 
 
+def key_gen(whichList):
+    skeys = [s.id for s in client.servers]
+    lkeys = list(whichList.keys())
+    for sk in skeys:
+        if sk not in lkeys:
+            yield sk
+
+
 # Deletes non-existent servers; adds previously non-existent servers.
 # Basically matches the servers I have info for with the users list.
-def update_dict(whichList, listfilename):
-    u_server_keys = [s.id for s in client.servers]
-    u_poke_list = list(whichList.keys())
-    for s in u_server_keys[:]:
-        if s in u_poke_list[:]:
-            u_server_keys.remove(s)
-            u_poke_list.remove(s)
-    for k in u_server_keys:
-        whichList[k] = {}
-    for k in u_poke_list:
-        del whichList[k]
+def update_dict(whichList, listfilename, default):
+    new_key_gen = key_gen(whichList)
+    for k in new_key_gen:
+        whichList[k] = default
+    for k in list(whichList.keys()):
+        if k not in [s.id for s in client.servers]:
+            del whichList[k]
     save_file(listfilename, whichList)
     return whichList
 
@@ -71,8 +75,9 @@ async def on_ready():
     print('------')
 
     poke_list = open_file(drafted_poke_file, {})
-    poke_list = update_dict(poke_list, drafted_poke_file)
+    poke_list = update_dict(poke_list, drafted_poke_file, {})
     draft_order = open_file(orderFile, {s.id: [] for s in client.servers})
+    draft_order = update_dict(draft_order, orderFile, [])
     admin_ids = open_file(adminsFile, admin_ids)
     drafting = {s.id: False for s in client.servers}
     pokedex = pickle.load(open('pokedex', 'rb'))
@@ -187,9 +192,10 @@ async def draft(sID, ret):
 #     show: display everybody's picks
 #   default: member
 #     show: display their own picks
-# public
+# public (!)
 #   admin
-#     start/stop draft
+#     start draft: starts the draft system
+#     end draft: stops the draft
 #   member
 #     See draft order
 @client.event
@@ -311,13 +317,17 @@ async def on_message(message):
         #Anyone else
         #   Show the queue
         if msg[0]=='q' or msg[0]=='queue':
-            to_show = 15
+            e = 16
+            try:
+                e = int(msg[1])
+            except:
+                pass
             to_send = ''
             sID = message.server.id
             if len(draft_order[sID]) == 0:
                 await client.send_message(message.channel, 'The queue is empty.')
                 return
-            que = draft_order[sID][:to_show]
+            que = draft_order[sID][:e]
             for i, j in zip(que, range(len(que))):
                 member = client.get_server(sID).get_member(i)
                 to_send += '{}\t{}\n'.format(j, member.name)
