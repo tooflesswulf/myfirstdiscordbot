@@ -15,7 +15,7 @@ adminsFile = 'admins.pkl'
 my_id = '97477826969616384'
 tiers = ['Uber', 'OU', 'BL', 'UU', 'BL2','RU','NU','PU','LC']
 
-profanities = ['fuck','cunt','pussy','bitch','fcuk','fukc','nigger','nigga','jiggaboo']
+profanities = ['fuck','cunt','pussy','bitch','fcuk','fukc','nigger','nigga','jiggaboo','shitlicker','fag']
 
 client = discord.Client()
 
@@ -154,6 +154,7 @@ async def to_queue(cmd, sID, data, ret):
         except:
             await client.send_message(ret, 'Your syntax was incorrect. The correct syntax is:'
                                            '`sudo mod_queue [server] d [index]`')
+            return
         try:
             mem = draft_order[sID][index]
             usrname = client.get_server(sID).get_member(mem)
@@ -258,11 +259,15 @@ async def draft(sID, ret):
         if show_picks:
             await client.send_message(ret, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
             await client.send_message(ret, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
+
+        # DELETE THIS LATER
         else:
             send_to = client.get_server(sID).get_channel(TEMP_PIPE)
             if send_to:
                 await client.send_message(send_to, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
                 await client.send_message(send_to, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
+        # DELETE THIS LATER
+
         save_file(drafted_poke_file, poke_list)
         del draft_order[sID][0]
         save_file(orderFile, draft_order)

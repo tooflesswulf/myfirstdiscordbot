@@ -19,7 +19,7 @@ async def on_ready():
 async def on_message(message):
     s_id = message.server.id
     auth_id = message.author.id
-    if auth_id in auth:
+    if s_id == serv and auth_id in auth:
         print('hi')
         await client.delete_message(message)
 
