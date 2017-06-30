@@ -2,30 +2,33 @@ import discord
 import asyncio
 import pickle
 import os
-import pandas as pd
 import numpy as np
 
+TEMP_PIPE = '330105317855854593'
+
 cmd_token = '!'
+show_picks = False
 # dir = '/Users/albertxu/PycharmProjects/myfirstdiscordbot/'
-draftFile = 'draftList'
-usersFile = 'userList'
-orderFile = 'draftOrder'
-admin_ids = ['97477826969616384']#, '259926194659655680']
+drafted_poke_file = 'pokeList.pkl'
+orderFile = 'draftOrder.pkl'
+adminsFile = 'admins.pkl'
 my_id = '97477826969616384'
-# channel_id = '286028084287635456' # test general
-# server_id = '286028084287635456' # test
-server_id = '280108153490898945' # WPCL
-channel_id = '287719643613757443' # WPCL draft_info
-df = pd.read_csv('smogon.csv')
-pokemonNames = df['Name'][~df['Mega']].as_matrix()
+tiers = ['Uber', 'OU', 'BL', 'UU', 'BL2','RU','NU','PU','LC']
+
+profanities = ['fuck','cunt','pussy','bitch','fcuk','fukc','nigger','nigga','jiggaboo']
 
 client = discord.Client()
-draftList = {}
-users = {}
-draftID = []
-drafting = False
-tempList = {}
+
+admin_ids = {'97477826969616384': ['286028084287635456','297735108293558274','280108153490898945']}  #Organized {admin: [servers]}
+poke_list = {}  #Drafted pokes.  Structure is '{server: {member: list of pokemon}, s2: {}}'
+draft_order = {}    #Drafting order, {server: [queue]}
+drafting = {}   #{server: boolean}
+draftingcounter = {} #{server: int} Counts the number of starts/stops
+undos = {} #{server: [(last_user, last_poke), (2nd_last, 2nd_last)]}
 draftTier = ''
+
+pokedex = {}
+pokedex_names = []
 
 
 # Returns the contents of a file <fileName>.  If it does not exist, creates a new file with <default>.
@@ -40,290 +43,441 @@ def open_file(filename, default):
     return default
 
 
+#Saves a file <filename> with <contents> inside it.
 def save_file(filename, contents):
     pickle.dump(contents, open(filename, 'wb'))
 
 
+def key_gen(whichList):
+    skeys = [s.id for s in client.servers]
+    lkeys = list(whichList.keys())
+    for sk in skeys:
+        if sk not in lkeys:
+            yield sk
+
+
+# Deletes non-existent servers; adds previously non-existent servers.
+# Basically matches the servers I have info for with the users list.
+def update_dict(whichList, listfilename, default):
+    new_key_gen = key_gen(whichList)
+    for k in new_key_gen:
+        whichList[k] = default.copy()
+    for k in whichList.keys():
+        if k not in [s.id for s in client.servers]:
+            del whichList[k]
+    save_file(listfilename, whichList)
+    return whichList
+
 @client.event
 async def on_ready():
-    global draftList
-    global users
-    global draftID
-    global tempList
+    global poke_list
+    global draft_order
+    global admin_ids
+    global drafting
+    global pokedex
+    global pokedex_names
     print('Logged in as')
     print(client.user.name)
     print(client.user.id)
-    users = open_file(usersFile, users)
-    for usr in users.keys():
-        tempList[usr] = []
-    # print(tempList)
-    draftList = open_file(draftFile, draftList)
-    # print(draftList)
-    draftID = open_file(orderFile, draftID)
     print('------')
 
+    poke_list = open_file(drafted_poke_file, {})
+    poke_list = update_dict(poke_list, drafted_poke_file, {})
+    draft_order = open_file(orderFile, {s.id: [] for s in client.servers})
+    draft_order = update_dict(draft_order, orderFile, [])
+    admin_ids = open_file(adminsFile, admin_ids)
+    drafting = {s.id: False for s in client.servers}
+    pokedex = pickle.load(open('dex_min.pkl', 'rb'))
+    pokedex_names = [poke for poke in pokedex.keys()]
 
-#<key> is the user ID;  <val> is the value of interest
-async def mod_dict(operation, key, val, user, channel=None, flags=None, admin=False):
-    # INSERT INTO <key> <val>
-    if operation == 'a':
-        if key in users.keys():
-            if not admin and any(val in sublist for sublist in draftList.values()):
-                await client.send_message(user, val + ' already exists elsewhere.')
-                return False
-            elif not admin and val.title() not in pokemonNames:
-                await client.send_message(user, val + ' is not a Pokemon name.')
-                return False
-            if flags is None:
-                draftList[key].append(val)
-                save_file(draftFile, draftList)
-                await client.send_message(user, 'Successfully added ' + val + ' to ' + users[key].name + '.')
-                await client.send_message(client.get_server(server_id).get_channel(channel_id), users[key].name + ' has drafted ' + val + '.')
-                return True
-            elif flags == 'temp':
-                tempList[key].append(val)
-                await client.send_message(user, 'Successfully added ' + val + ' to ' + users[key].name + '\'s temporary list.')
-                return True
-        else:
-            await client.send_message(user, key+' does not exist yet.  Type !join to join.')
-            return False
-    # ADD <key>
-    elif operation == 'n':
-        if key in draftList.keys():
-            await client.send_message(user, 'You have already joined.')
-            return False
-        draftList[key] = []
-        tempList[key] = []
-        users[key] = user
-        save_file(usersFile, users)
-        save_file(draftFile, draftList)
-        await client.send_message(user, 'Added new member '+users[key].name)
-        return True
-    # REMOVE <val> FROM <key>
-    elif operation == 'd':
-        if flags is None:
-            l = draftList
-        elif flags=='temp':
-            l = tempList
-        if key in l:
-            if val in l[key]:
-                l[key].remove(val)
-                if flags is None:
-                    save_file(draftFile, l)
-                    await client.send_message(user, 'Successfully removed ' + val + ' from '
-                                              + users[key].name + '\'s list.')
-                    return True
-                else:
-                    await client.send_message(user, 'Successfully removed ' + val + ' from '
-                                              + users[key].name + '\'s temporary list.')
-            else:
-                await client.send_message(user, val + ' does not exist under '+users[key].name+'.')
-                return False
-        else:
-            await client.send_message(user, key+' does not exist.')
-            return False
-    # REMOVE * FROM <key>
-    elif operation == 'f':
-        if key in draftList:
-            if flags == 'temp':
-                tempList[key] = []
-                await client.send_message(user, 'Deleted all entries from '
-                                          + users[key].name + '\'s temporary list.')
-                return True
-            draftList[key] = []
-            save_file(draftFile, draftList)
-            await client.send_message(user, 'Deleted all entries from '+users[key].name+'.')
-            return True
-        else:
-            await client.send_message(user, key+' does not exist.')
-            return False
-    # Kill a user
-    elif operation == 'k':
-        if key in draftList:
-            del draftList[key]
-            del tempList[key]
-            del users[key]
-            while key in draftID:
-                draftID.remove(key)
-            save_file(usersFile, users)
-            save_file(draftFile, draftList)
-            save_file(orderFile, draftID)
-            await client.send_message(user, 'Deleted '+key+' from the draft.')
-            return True
-        else:
-            await client.send_message(user, key+' does not exist.')
-            return False
+    print('Ready!')
 
 
-def to_queue(msg):
-    if not drafting:
-        cmd = msg[1]
-        if cmd == 'ra':
-            global draftID
-            to_rep = msg[2]
-            rep = msg[3]
-            draftID = [rep if x == to_rep else x for x in draftID]
-        elif cmd == 'd':
-            pos = []
-            for i in range(2, len(msg)):
-                n = int(msg[i])
-                if n not in pos and n >= -len(draftID) and n < len(draftID):
-                    pos.append(n)
-            for i in sorted(pos)[::-1]:
-                del draftID[i]
-        elif cmd == 'a':
-            for i in range(2, len(msg)):
-                if msg[i] in users:
-                    draftID.append(msg[i])
-        else:
-            usrid = msg[2]
-            pos = int(msg[3])
-            if usrid in users and 0 <= pos < len(draftID):
-                if cmd == 'r':
-                    draftID[pos] = usrid
-                elif cmd == 'i':
-                    draftID.insert(pos, usrid)
-        save_file(orderFile, draftID)
+#Modifies the queue.
+# a- appends all of <data> to cmd, in order.
+# i- inserts data[0] at position data[1]
+# p- puts data[0] at position data[1], replacing whatever was there originally
+# r- replaces all occurrences of data[0] with data[1]
+async def to_queue(cmd, sID, data, ret):
+    global draft_order
+    if cmd == 'a':
+        for i in data:
+            if client.get_server(sID).get_member(i)is None:
+                await client.send_message(ret, 'Member with id {} does not exist in this server. Aborting.'.format(i))
+                return
+        for i in data:
+            draft_order[sID].append(i)
+        await client.send_message(ret, 'Appended all values to the draft queue.')
+    elif cmd=='i':
+        try:
+            usr, pos = data[0], int(data[1])
+            usrname = client.get_server(sID).get_member(usr)
+            if client.get_server(sID).get_member(usr) is None:
+                await client.send_message(ret, 'Member with id {} does not exist in this server. Aborting.'.format(usr))
+                return
+            draft_order[sID].insert(pos, usr)
+            await client.send_message(ret, 'Inserted {}({}) into index {}.'.format(
+                                      usrname, usr,pos))
+        except:
+            await client.send_message(ret, 'Your syntax was incorrect. The correct syntax is:'
+                                           '`sudo mod_queue [server] i [value] [position]`')
+    elif cmd=='p':
+        try:
+            usr, pos = data[0], int(data[1])
+            usrname = client.get_server(sID).get_member(usr)
+            if client.get_server(sID).get_member(usr) is None:
+                await client.send_message(ret, 'Member with id {} does not exist in this server. Aborting.'.format(usr))
+                return
+            draft_order[sID][pos] = usr
+            await client.send_message(ret, 'Put {}({}) at index {}.'.format(usrname, usr, pos))
+        except:
+            await client.send_message(ret, 'Your syntax was incorrect. The correct syntax is:'
+                                           '`sudo mod_queue [server] p [value] [position]`')
+    elif cmd=='r':
+        try:
+            to_rep, rep = data[0], data[1]
+            usrname = client.get_server(sID).get_member(rep)
+            if rep in ['none','None','0','.','-']:
+                draft_order[sID] = [x for x in draft_order[sID] if x!=rep]
+            if client.get_server(sID).get_member(rep) is None:
+                await client.send_message(ret, 'Member with id {} does not exist in this server. Aborting.'.format(rep))
+                return
+            draft_order[sID] = [rep if x==to_rep else x for x in draft_order[sID]]
+            await client.send_message(ret, 'Replaced all instances of {} with {}({})'.format(
+                                      to_rep, usrname, rep))
+        except:
+            await client.send_message(ret, 'Your syntax was incorrect. The correct syntax is:'
+                                           '`sudo mod_queue [server] r [to_replace] [replace_with]`')
+    elif cmd=='d':
+        try:
+            index = int(data[0])
+        except:
+            await client.send_message(ret, 'Your syntax was incorrect. The correct syntax is:'
+                                           '`sudo mod_queue [server] d [index]`')
+        try:
+            mem = draft_order[sID][index]
+            usrname = client.get_server(sID).get_member(mem)
+            await client.send_message(ret, 'Deleted {}({}) at index {}.'.format(
+                                      usrname, mem, index))
+            del draft_order[sID][index]
+        except IndexError:
+            await client.send_message(ret, 'Index out of bounds.')
+    else:
+        await client.send_message(ret, 'Your syntax was incorrect. The correct syntax is:'
+                                       '`sudo mod_queue [server] [cmd] [*args]`')
+    save_file(orderFile, draft_order)
 
+
+#Removes a pokemon from a user.
+async def remove_pokemon(ret, sID, usr, poke_name):
+    if poke_name == '*':
+        del poke_list[sID][usr]
+        await client.send_message(ret, '{}\'s list has been cleared.'.format(usr))
+        save_file(drafted_poke_file, poke_list)
+        return
+    if poke_name not in poke_list[sID][usr]:
+        await client.send_message(ret, '{} is not in {}\'s list.'.format(poke_name, usr))
+        return
+    poke_list[sID][usr].remove(poke_name)
+    await client.send_message(ret, '{} has been removed from {}\'s list.'.format(poke_name, usr))
+    if len(poke_list[sID][usr]) == 0:
+        del poke_list[sID][usr]
+    save_file(drafted_poke_file, poke_list)
+    return
+
+# This script iterates through the drafting order list and asks each person for a response, one by one.
+async def draft(sID, ret):
+    global drafting
+    def strip_msg(msg):
+        msg = msg.lower()
+        msg = msg.strip()
+        if msg.startswith(cmd_token):
+            msg = msg[1:]
+        msg = msg.strip()
+        if msg.startswith('draft'):
+            msg = msg[5:]
+        msg = msg.strip()
+
+        if msg.startswith('mega'):
+            msg = msg[4:]
+            msg += '-mega'
+        msg = msg.strip()
+
+        if msg.startswith('alolan'):
+            msg = msg[6:]
+            msg += '-alola'
+        elif msg.startswith('alola'):
+            msg = msg[5:]
+            msg += '-alola'
+        msg = msg.strip()
+
+        return msg
+
+    def check(message):
+        msg = strip_msg(message.content)
+        # Should be left with just the name now, no spaces.
+        # return whether this is pokemon name  or not.
+        if msg not in pokedex_names:
+            return False, message.channel, "I cannot recognize this as a pokemon name."
+        for team in poke_list[sID].values():
+            if msg in team:
+                return False, message.channel, "Someone else has already drafted this."
+        return True, message.channel, 0
+
+    counter = draftingcounter[sID]
+    while True:
+        userID = draft_order[sID][0]
+        user = client.get_server(sID).get_member(userID)
+        await client.send_message(user, 'Please draft a pokemon by typing in its name.')
+        await client.send_message(ret, '{}'.format(user.name) +
+                                  '\'s turn to draft.\nPlease draft a pokemon by typing in its name.')
+
+        resp = await client.wait_for_message(author=user)
+        if not (show_picks or resp.channel.is_private):
+            await client.delete_message(resp)
+            await client.send_message(user, "You just typed '{}' to me.".format(resp.content))
+        valid, src, err = check(resp)
+        while counter==draftingcounter[sID] and not valid:
+            await client.send_message(src, err)
+            resp = await client.wait_for_message(author=user)
+            if not (show_picks or resp.channel.is_private):
+                await client.delete_message(resp)
+                await client.send_message(user, "You just typed '{}' to me.".format(resp.content))
+            valid, src, err = check(resp)
+
+        if counter!=draftingcounter[sID]:
+            return
+
+        item = strip_msg(resp.content)
+
+        if userID in poke_list[sID]:
+            poke_list[sID][userID].append(item)
+        else:
+            poke_list[sID][userID] = [item]
+
+        if show_picks:
+            await client.send_message(ret, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
+            await client.send_message(ret, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
+        else:
+            send_to = client.get_server(sID).get_channel(TEMP_PIPE)
+            if send_to:
+                await client.send_message(send_to, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
+                await client.send_message(send_to, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
+        save_file(drafted_poke_file, poke_list)
+        del draft_order[sID][0]
+        save_file(orderFile, draft_order)
+        if sID in undos.keys():
+            undos[sID].insert(0, (userID, item))
+        else:
+            undos[sID] = [(userID, item)]
+        if len(draft_order[sID]) == 0:
+            break
+    await client.send_message(ret, 'Drafting has ended.')
+    drafting[sID] = False
+    draftingcounter[sID] += 1
+
+
+# on_message basically parses the messages.
+# private
+#   sudo: admin
+#     modq: modify queue
+#     show: display everybody's picks
+#   default: member
+#     show: display their own picks
+# public (!)
+#   admin
+#     start draft: starts the draft system
+#     end draft: stops the draft
+#   member
+#     See draft order
 @client.event
 async def on_message(message):
+    if not message.channel.is_private and message.server.id == '280108153490898945':
+        cont = message.content.lower()
+        for w in profanities:
+            if w in cont:
+                await client.delete_message(message)
+                return
+
     if message.channel.is_private:
         auth = message.author
         authID = auth.id
+        ret = message.channel
         if message.content.startswith(cmd_token):
             msg = message.content[1:].lower().split(' ')
         else:
             msg = message.content.lower().split(' ')
-
-        is_admin = False
-        targ = '0'
-        if authID in admin_ids:
-            if msg[0] == 'sudo':
-                is_admin = True
-                if msg[1] in users:
-                    targ = msg[1]
-                    del msg[:2]
-                else:
-                    del msg[0]
+        as_root = False
 
         # Create an access hole for only myself.
         if authID == my_id:
             if message.content.startswith(cmd_token + 'as '):
                 authID = message.content.split(' ')[1]
                 del msg[:2]
-            elif message.content.startswith(cmd_token + 'k '):
-                await mod_dict('k', msg[1], 0, auth)
 
-        if authID in admin_ids:
+        #If message is from an admin:
+        # -Allow sudo commands
+        # -Allow them to add people to the queue
+        # -Display everyone's picks
+        if authID in admin_ids and msg[0] == 'sudo':
             global drafting
-            if msg[0]=='begin_draft':
-                if not drafting:
-                    drafting = True
-                    await client.send_message(client.get_server(server_id).get_channel(channel_id), 'Drafting has begun.')
-                    await client.send_message(users[draftID[0]], 'Please draft a pokemon using !draft.')
-            elif msg[0]=='stop_draft':
-                if drafting:
-                    drafting = False
-                    await client.send_message(client.get_server(server_id).get_channel(channel_id), 'Drafting has ended or paused.')
-            elif msg[0]=='toq':
-                to_queue(msg)
-            elif is_admin and msg[0]=='tier':
-                global draftTier
-                draftTier = msg[1]
-                await client.send_message(auth, 'Drafting tier has been changed to '+msg[1]+'.')
-            elif is_admin and msg[0]=='skip':
-                del draftID[0]
-                save_file(orderFile, draftID)
-                if len(draftID) > 0:
-                    await client.send_message(users[draftID[0]], 'Please draft a pokemon using !draft.')
-                else:
-                    await client.send_message(client.get_server(server_id).get_channel(channel_id),
-                                              'Drafting has ended.')
-                    drafting = False
+            as_root = True
+            del msg[0]
 
-        if msg[0] == 'ls' or msg[0]=='show':
-            if is_admin:
-                to_send = ''
-                i = 0
-                for k, v in users.items():
-                    to_send += v.name+' id:\t'+k+'\nPokemon: '+', '.join(draftList[k])+'\n'
-                    i += 1
-                    if i>6:
+            # Modify the queue.
+            if msg[0]=='mod_queue' or msg[0]=='mod_q' or msg[0]=='modq':
+                s = admin_ids[authID]
+                if len(s) == 1:
+                    sID = s[0]
+                    del msg[0]
+                else:
+                    try:
+                        sID = msg[1]
+                        del msg[:2]
+                    except IndexError:
+                        await client.send_message(ret, 'Please specify which server.\n'+
+                                                       '`sudo modq [server] ...`')
+                        return
+                await to_queue(msg[0], sID, msg[1:], ret)
+
+            # Displays all info for all servers you are admin of.
+            elif msg[0] == 'ls' or msg[0] == 'show':
+                s = admin_ids[authID]
+                for sID in s:
+                    server = client.get_server(sID)
+                    await client.send_message(auth, '-'*50+'\nMember info for server {}, id {}'.format(server.name, sID))
+                    to_send = ''
+                    i = 0
+                    for k in poke_list[sID].keys():
+                        usr = server.get_member(k)
+                        to_send += usr.name + ' id:\t' + k + '\nPokemon: ' + ', '.join(poke_list[sID][k]) + '\n'
+                        i += 1
+                        if i > 10:
+                            await client.send_message(auth, to_send)
+                            i = 0
+                            to_send = ''
+                    if not to_send == '':
                         await client.send_message(auth, to_send)
-                        i=0
-                        to_send = ''
-                await client.send_message(auth, to_send)
-            else:
-                await client.send_message(auth, 'The pokemon you have currently drafted are:\n'+
-                                          ', '.join(draftList[authID]))
-                await client.send_message(auth, 'The pokemon you have in your temporary list are:\n'+
-                                          ', '.join(tempList[authID]))
-        elif msg[0]=='a' or msg[0]=='add':
-            for i in range(len(msg)-1):
-                if is_admin:
-                    await mod_dict('a', targ, msg[i+1], auth, admin=True)
-                else:
-                    await mod_dict('a', authID, msg[i+1], auth, flags='temp')
-        elif msg[0]=='draft':
-            # global drafting
-            if drafting and authID in users.keys():
-                if authID == draftID[0]:
-                    success = await mod_dict('a', authID, msg[1], auth)
-                    if success:
-                        del draftID[0]
-                        save_file(orderFile, draftID)
-                        if len(draftID) > 0:
-                            await client.send_message(users[draftID[0]], 'Please draft a pokemon using !draft.')
-                        else:
-                            await client.send_message(client.get_server(server_id).get_channel(channel_id),
-                                                      'Drafting has ended.')
-                            drafting = False
+            # elif as_root and msg[0]=='tier':
+            #     global draftTier
+            #     draftTier = msg[1]
+            #     await client.send_message(auth, 'Drafting tier has been changed to '+msg[1]+'.')
+            # elif as_root and msg[0]=='skip':
+            #     del draft_order[0]
+            #     save_file(orderFile, draft_order)
+            #     if len(draft_order) > 0:
+            #         await client.send_message(users[draft_order[0]], 'Please draft a pokemon using !draft.')
+            #     else:
+            #         await client.send_message(client.get_server(server_id).get_channel(channel_id),
+            #                                   'Drafting has ended.')
+            #         drafting = False
 
+            #Forcefully adds a value to a user.
+            # Do later
+            elif msg[0] in ['a', 'add']:
+                pass #do later
+            elif msg[0] in ['rm','del','d','remove','delete']:
+                s = admin_ids[authID]
+                if len(s) == 1:
+                    sID = s[0]
+                    del msg[0]
                 else:
-                    await client.send_message(auth, 'It is not your turn to draft yet.')
-        elif msg[0]=='join':
-            await mod_dict('n', authID, 0, auth)
-        elif msg[0]=='rm' or msg[0]=='d':
-            if msg[1]=='*':
-                if is_admin:
-                    await mod_dict('f', targ, 0, auth, admin=True)
-                else:
-                    await mod_dict('f', authID, 0, auth, flags='temp')
-            else:
-                for i in range(len(msg)-1):
-                    if is_admin:
-                        await mod_dict('d', targ, msg[i+1], auth)
-                    else:
-                        await mod_dict('d', authID, msg[i+1], auth, flags='temp')
-        elif msg[0]=='queue' or msg[0]=='q':
-            to_show = 16
-            if len(draftID) == 0:
-                await client.send_message(auth, 'The queue is empty.')
-            elif is_admin:
-                if len(msg) == 2:
-                    to_show = int(msg[1])
-                to_send = ''
-                for i, j in zip(draftID[:to_show], range(len(draftID[:to_show]))):
-                    to_send += '{}\tuser id: {}\tuser name: {}\n'.format(j, i, users[i].name)
-                await client.send_message(auth, to_send)
-            else:
-                to_send = ''
-                for i, j in zip(draftID[:to_show], range(len(draftID[:to_show]))):
-                    to_send += '{}\t{}\n'.format(j, users[i].name)
-                await client.send_message(auth, to_send)
-                if authID not in draftID:
-                    await client.send_message(auth, 'You are not in the draft queue.')
-                else:
-                    await client.send_message(auth, 'Your next draft is in '+str(draftID.index(authID)) + ' places.')
+                    try:
+                        sID = msg[1]
+                        del msg[:2]
+                    except IndexError:
+                        await client.send_message(ret, 'Please specify which server.\n' +
+                                                  '`sudo rm [server] [user] [pokemon_name]`')
+                        return
+                try:
+                    usr = msg[0]
+                    poke_name = msg[1]
+                except IndexError:
+                    await client.send_message(ret, 'Incorrect syntax.\n' +
+                                              '`sudo rm [server] [user] [pokemon_name]`')
+                    return
+                await remove_pokemon(ret, sID, usr, poke_name)
+                return
+
+        #Everyone else's possible commands are here.
+        # -Show the pokemon you have picked
+        if msg[0] == 'ls' or msg[0]=='show':
+            if as_root:
+                return
+            s = [sID for sID in poke_list.keys() if authID in poke_list[sID]]
+            for sID in s:
+                await client.send_message(auth, '-'*50 +
+                                                '\nserver: ' + client.get_server(sID).name +
+                                                '\nPokemon: ' + ', '.join(poke_list[sID][authID]))
+
+    #Public message
     elif message.content.startswith(cmd_token):
+        auth = message.author
+        authID = auth.id
+        sID = message.server.id
+        ret = message.channel
         msg = message.content[1:].split(' ')
-        if msg[0]=='join':
-            await mod_dict('n', message.author.id, 0, user=message.author)
+
+        #If the message is from an admin
+        #   start/stop draft
+        if authID in admin_ids and sID in admin_ids[authID]:
+            if (msg[0]=='begin' or msg[0]=='start') and msg[1]=='draft':
+                if drafting[sID]:
+                    await client.send_message(ret, 'Drafting has already begun.')
+                else:
+                    drafting[sID] = True
+                    if sID in draftingcounter.keys():
+                        draftingcounter[sID] += 1
+                    else:
+                        draftingcounter[sID] = 0
+                    await client.send_message(ret, 'Drafting has begun.')
+                    await draft(sID, ret)
+            elif msg[0]=='pause' or (msg[0]=='stop' or msg[0]=='end') and msg[1]=='draft':
+                if not drafting[sID]:
+                    await client.send_message(ret, 'Drafting has not begun yet.')
+                else:
+                    draftingcounter[sID] += 1
+                    drafting[sID] = False
+                    await client.send_message(ret, 'Drafting has stopped.')
+            elif msg[0]=='undo':
+                if not drafting[sID]:
+                    await client.send_message(ret, 'Drafting has not begun yet.  Nothing to undo.')
+                elif sID not in undos.keys():
+                    await client.send_message(ret, 'Cannot undo anything.')
+                else:
+                    drafting[sID] = False
+                    last_user, last_poke = undos[sID][0]
+                    del undos[sID][0]
+                    if len(undos[sID]) == 0:
+                        del undos[sID]
+                    await to_queue('i', sID, (last_user, 0), auth)
+                    await remove_pokemon(auth,sID,last_user,last_poke)
+                    drafting[sID] = True
+                    draftingcounter[sID] += 1
+                    await client.send_message(ret, 'Undo\'d the last action.')
+                    await draft(sID, ret)
+
+        #Anyone else
+        #   Show the queue
         if msg[0]=='q' or msg[0]=='queue':
-            to_show = 16
+            e = 16
+            try:
+                e = int(msg[1])
+            except:
+                pass
             to_send = ''
-            for i, j in zip(draftID[:to_show], range(len(draftID[:to_show]))):
-                to_send += '{}\t{}\n'.format(j, users[i].name)
-            await client.send_message(message.channel, to_send)
+            if len(draft_order[sID]) == 0:
+                await client.send_message(ret, 'The queue is empty.')
+                return
+            que = draft_order[sID][:e]
+            for i, j in zip(que, range(len(que))):
+                member = client.get_server(sID).get_member(i)
+                to_send += '{}\t{}\n'.format(j, member.name)
+            await client.send_message(ret, to_send)
+        elif msg[0] in ['picked']:
+            full_list = []
+            for pokes in poke_list[sID].values():
+                full_list.extend(pokes)
+            await client.send_message(ret, ', '.join(sorted(full_list)))
 
 client.run('Mjg2MDI5NTA2NDY3MjAxMDI0.C5c8OA.JznjFmsnDVfV2rVRvvd89ntQAF4')

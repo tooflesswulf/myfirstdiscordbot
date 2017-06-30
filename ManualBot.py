@@ -9,12 +9,12 @@ saveFile = 'savedList'
 
 client = discord.Client()
 
-draftList = {'admin': ['test']}
+poke_list = {'admin': ['test']}
 
 
 @client.event
 async def on_ready():
-    global draftList
+    global poke_list
     print('Logged in as')
     print(client.user.name)
     print(client.user.id)
@@ -30,26 +30,26 @@ async def on_ready():
 
 
 def save_draft():
-    pickle.dump(draftList, open(saveFile, 'wb'))
+    pickle.dump(poke_list, open(saveFile, 'wb'))
 
 
 def mod_dict(operation, key, val):
     if operation == 'a':
-        if key in draftList:
-            if any(val in sublist for sublist in draftList.values()):
+        if key in poke_list:
+            if any(val in sublist for sublist in poke_list.values()):
                 return val + ' already exists elsewhere.'
-            draftList[key].append(val)
+            poke_list[key].append(val)
         else:
-            draftList[key] = [val]
+            poke_list[key] = [val]
         save_draft()
         return 'Successfully added '+val+' to '+key+'.'
     elif operation == 'd':
-        if key in draftList:
-            if len(draftList[key])==0:
-                del draftList[key]
+        if key in poke_list:
+            if len(poke_list[key])==0:
+                del poke_list[key]
                 return 'Successfully removed '+val+' from '+key+'.'
-            if val in draftList[key]:
-                draftList[key].remove(val)
+            if val in poke_list[key]:
+                poke_list[key].remove(val)
                 save_draft()
                 return 'Successfully removed '+val+' from '+key+'.'
             else:
@@ -57,8 +57,8 @@ def mod_dict(operation, key, val):
         else:
             return key+' is currently empty.'
     elif operation == 'f':
-        if key in draftList:
-            del draftList[key]
+        if key in poke_list:
+            del poke_list[key]
             save_draft()
             return 'Deleted all entries in '+key+'.'
         else:
@@ -79,7 +79,7 @@ async def on_message(message):
 
             await client.edit_message(tmp, 'You have {} messages.'.format(counter))
         elif msg[0] == 'printq':
-            await client.send_message(message.channel, draftList)
+            await client.send_message(message.channel, poke_list)
         elif msg[0] == 'add':
             for i in range(len(msg)-1):
                 resp = mod_dict('a', message.channel.name, msg[i + 1])
