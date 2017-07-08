@@ -13,9 +13,9 @@ drafted_poke_file = 'pokeList.pkl'
 orderFile = 'draftOrder.pkl'
 adminsFile = 'admins.pkl'
 my_id = '97477826969616384'
-tiers = ['Uber', 'OU', 'BL', 'UU', 'BL2','RU','NU','PU','LC']
+tiers = ['uber', 'ou', 'bl', 'uu', 'bl2','ru','bl3','nu','pu','lc']
 
-profanities = ['fuck','cunt','pussy','bitch','fcuk','fukc','nigger','nigga','jiggaboo','shitlicker','fag']
+profanities = ['fuck','cunt','pussy','bitch','fcuk','fukc','nigger','nigga','jiggaboo','shitlicker','fag','cock']
 
 client = discord.Client()
 
@@ -235,52 +235,65 @@ async def draft(sID, ret):
 
         resp = await client.wait_for_message(author=user)
         if not (show_picks or resp.channel.is_private):
-            await client.delete_message(resp)
-            await client.send_message(user, "You just typed '{}' to me.".format(resp.content))
+            try:
+                await client.delete_message(resp)
+                await client.send_message(user, "You just typed '{}' to me.".format(resp.content))
+            except:
+                pass
         valid, src, err = check(resp)
         while counter==draftingcounter[sID] and not valid:
             await client.send_message(src, err)
             resp = await client.wait_for_message(author=user)
-            if not (show_picks or resp.channel.is_private):
-                await client.delete_message(resp)
-                await client.send_message(user, "You just typed '{}' to me.".format(resp.content))
+            if counter==draftingcounter[sID]:
+                if not (show_picks or resp.channel.is_private):
+                    try:
+                        await client.delete_message(resp)
+                        await client.send_message(user, "You just typed '{}' to me.".format(resp.content))
+                    except:
+                        pass
             valid, src, err = check(resp)
 
-        if counter!=draftingcounter[sID]:
+        if counter != draftingcounter[sID]:
             return
 
         item = strip_msg(resp.content)
 
-        if userID in poke_list[sID]:
-            poke_list[sID][userID].append(item)
-        else:
-            poke_list[sID][userID] = [item]
-
-        if show_picks:
-            await client.send_message(ret, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
-            await client.send_message(ret, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
-
-        # DELETE THIS LATER
-        else:
-            send_to = client.get_server(sID).get_channel(TEMP_PIPE)
-            if send_to:
-                await client.send_message(send_to, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
-                await client.send_message(send_to, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
-        # DELETE THIS LATER
-
-        save_file(drafted_poke_file, poke_list)
-        del draft_order[sID][0]
-        save_file(orderFile, draft_order)
-        if sID in undos.keys():
-            undos[sID].insert(0, (userID, item))
-        else:
-            undos[sID] = [(userID, item)]
+        await add_poke(sID, userID, item, ret)
         if len(draft_order[sID]) == 0:
             break
     await client.send_message(ret, 'Drafting has ended.')
     drafting[sID] = False
     draftingcounter[sID] += 1
 
+
+# Adds pokemon to a user's list.
+# Also removed the first member of the queue.
+async def add_poke(sID, userID, item, ret):
+    user = client.get_server(sID).get_member(userID)
+    if userID in poke_list[sID]:
+        poke_list[sID][userID].append(item)
+    else:
+        poke_list[sID][userID] = [item]
+
+    if show_picks:
+        await client.send_message(ret, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
+        await client.send_message(ret, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
+
+    # DELETE THIS LATER
+    else:
+        send_to = client.get_server(sID).get_channel(TEMP_PIPE)
+        if send_to:
+            await client.send_message(send_to, '{} has drafted {}.\nTier: {}'.format(user.name, item, pokedex[item]))
+            await client.send_message(send_to, 'http://www.smogon.com/dex/media/sprites/xy/{}.gif'.format(item))
+    # DELETE THIS LATER
+
+    save_file(drafted_poke_file, poke_list)
+    del draft_order[sID][0]
+    save_file(orderFile, draft_order)
+    if sID in undos.keys():
+        undos[sID].insert(0, (userID, item))
+    else:
+        undos[sID] = [(userID, item)]
 
 # on_message basically parses the messages.
 # private
@@ -461,6 +474,23 @@ async def on_message(message):
                     draftingcounter[sID] += 1
                     await client.send_message(ret, 'Undo\'d the last action.')
                     await draft(sID, ret)
+            elif msg[0]=='skip':
+                try:
+                    to_add = message.content[6:]
+                    if to_add == '':
+                        to_add = 'sunkern'
+                except IndexError:
+                    to_add = 'sunkern'
+                if not drafting[sID]:
+                    await client.send_message(ret, 'Drafting has not begun yet.  Nothing to skip.')
+                else:
+                    drafting[sID] = False
+                    userID = draft_order[sID][0]
+                    draftingcounter[sID] += 1
+                    await add_poke(sID, userID, to_add, ret)
+                    await client.delete_message(message)
+                    drafting[sID] = True
+                    await draft(sID, ret)
 
         #Anyone else
         #   Show the queue
@@ -480,9 +510,25 @@ async def on_message(message):
                 to_send += '{}\t{}\n'.format(j, member.name)
             await client.send_message(ret, to_send)
         elif msg[0] in ['picked']:
+            tier = []
+            for t in msg[1:]:
+                try:
+                    assert t.lower() in tiers
+                    tier.append(t.lower())
+                except:
+                    pass
             full_list = []
             for pokes in poke_list[sID].values():
-                full_list.extend(pokes)
-            await client.send_message(ret, ', '.join(sorted(full_list)))
+                for p in pokes:
+                    try:
+                        if tier == [] or pokedex[p][0].lower() in tier:
+                            full_list.append(p)
+                    except:
+                        pass
+            to_send = ', '.join(sorted(full_list))
+            if to_send != '':
+                await client.send_message(ret, to_send)
+            else:
+                await client.send_message(ret, 'NO PICKS YET.')
 
 client.run('Mjg2MDI5NTA2NDY3MjAxMDI0.C5c8OA.JznjFmsnDVfV2rVRvvd89ntQAF4')
